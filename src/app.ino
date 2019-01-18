@@ -14,6 +14,8 @@ exixe tube4 = exixe(cs4);
 exixe tube5 = exixe(cs5);
 exixe tube6 = exixe(cs6);
 
+int color = 127;
+
 void setup()
 {
   tube1.spi_init();
@@ -26,7 +28,7 @@ void setup()
   tube6.clear();
 }
 
-int color = 127;
+int count = 0;
 
 void loop()
 {
@@ -36,6 +38,19 @@ void loop()
   tube4.set_led(0, color, 0);
   tube5.set_led(0, 0, color);
   tube6.set_led(color, 0, 0);
+
+  if (count > 9) {
+    count = 0;
+  }
+
+  tube1.show_digit(count, 127, 0);
+  tube2.show_digit(count, 127, 0);
+  tube3.show_digit(count, 127, 0);
+  tube4.show_digit(count, 127, 0);
+  tube5.show_digit(count, 127, 0);
+  tube6.show_digit(count, 127, 0);
+
+  count++;
 
   delay(1000);
 }
