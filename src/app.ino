@@ -1,56 +1,33 @@
 #include "exixe.h"
 
-int cs1 = 22;
-int cs2 = 23;
-int cs3 = 24;
-int cs4 = 25;
-int cs5 = 26;
-int cs6 = 27;
+const int TUBE_COUNT = 6;
+const int MAX_BRIGHTNESS = 127;
 
-exixe tube1 = exixe(cs1);
-exixe tube2 = exixe(cs2);
-exixe tube3 = exixe(cs3);
-exixe tube4 = exixe(cs4);
-exixe tube5 = exixe(cs5);
-exixe tube6 = exixe(cs6);
+int tubeSsPins[TUBE_COUNT] = {22, 23, 24, 25, 26, 27};
+exixe *tubes[TUBE_COUNT];
 
-int color = 127;
+void setup() {
 
-void setup()
-{
-  tube1.spi_init();
-
-  tube1.clear();
-  tube2.clear();
-  tube3.clear();
-  tube4.clear();
-  tube5.clear();
-  tube6.clear();
-}
-
-int count = 0;
-
-void loop()
-{
-  tube1.set_led(0, color, 0);
-  tube2.set_led(0, 0, color);
-  tube3.set_led(color, 0, 0);
-  tube4.set_led(0, color, 0);
-  tube5.set_led(0, 0, color);
-  tube6.set_led(color, 0, 0);
-
-  if (count > 9) {
-    count = 0;
+  for(int i = 0; i < TUBE_COUNT; i++) {
+    tubes[i] = new exixe(tubeSsPins[i]);
   }
 
-  tube1.show_digit(count, 127, 0);
-  tube2.show_digit(count, 127, 0);
-  tube3.show_digit(count, 127, 0);
-  tube4.show_digit(count, 127, 0);
-  tube5.show_digit(count, 127, 0);
-  tube6.show_digit(count, 127, 0);
+  tubes[0]->spi_init();
+  randomSeed(analogRead(0));
+}
 
-  count++;
+void loop() {
 
-  delay(1000);
+  for (int j = 0; j < 10; j++) {
+
+    for (int i = 0; i < TUBE_COUNT; i++) {
+
+      tubes[i]->show_digit(j, MAX_BRIGHTNESS, 0);
+      tubes[i]->set_led(random(0, 128), random(0, 128), random(0, 128));
+      delay(100);
+
+    }
+
+    delay(500);
+  }
 }
