@@ -1,5 +1,6 @@
 #include "exixe.h"
 #include "DS3231.h"
+#include "NonBlockingDelay.h"
 
 const int TUBE_COUNT = 6;
 const int MAX_BRIGHTNESS = 127;
@@ -18,6 +19,8 @@ exixe *tubes[TUBE_COUNT];
 DS3231 clocka;
 RTCDateTime dta;
 
+NonBlockingDelay *nbd;
+
 void setup() {
 
   for(int i = 0; i < TUBE_COUNT; i++) {
@@ -31,12 +34,16 @@ void setup() {
 
   clocka.begin();
   clocka.setDateTime(__DATE__, __TIME__);
+
+  nbd = new NonBlockingDelay(1000);
 }
 
 void loop() {
 
-  DisplayTime();
-  delay(1005);
+  if (nbd->hasElapsed()) {
+    DisplayTime();
+    nbd = new NonBlockingDelay(1000);
+  }
   //AntiTubePoisoning();
 }
 
@@ -61,11 +68,11 @@ void DisplayTime() {
   // Serial.print(h2);
   // Serial.print(m1);
   // Serial.print(m2);
-  // Serial.print(s1);
-  // Serial.println(s2);
+  Serial.print(s1);
+  Serial.println(s2);
 
   if (h1 == 0) {
-    tubes[H1]->clear();
+    tubes[H1]->show_digit(0, 127, 0);
   } else {
     tubes[H1]->show_digit(h1, 127, 0);
   }
