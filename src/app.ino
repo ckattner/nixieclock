@@ -1,6 +1,8 @@
 #include "exixe.h"
 #include "DS3231.h"
 #include "NonBlockingDelay.h"
+#include "Encoder.h"
+#include "limits.h"
 
 const int TUBE_COUNT = 6;
 const int MAX_BRIGHTNESS = 127;
@@ -16,10 +18,10 @@ const int S2 = 5;
 int tubeSsPins[TUBE_COUNT] = {22, 23, 24, 25, 26, 27};
 exixe *tubes[TUBE_COUNT];
 
-DS3231 clocka;
-RTCDateTime dta;
-
-NonBlockingDelay *nbd;
+DS3231 rtc;
+NonBlockingDelay *displayTimeDelay;
+Encoder hoursEnc(40, 41);
+long oldPos = 0;
 
 void setup() {
 
@@ -32,57 +34,79 @@ void setup() {
 
   Serial.begin(9600);      // open the serial port at 9600 bps:
 
-  clocka.begin();
-  clocka.setDateTime(__DATE__, __TIME__);
+  rtc.begin();
+  rtc.setDateTime(__DATE__, __TIME__);
 
-  nbd = new NonBlockingDelay(1000);
+  displayTimeDelay = new NonBlockingDelay(1000);
 }
 
 void loop() {
 
-  if (nbd->hasElapsed()) {
+  UpdateTime();
+
+  if (displayTimeDelay->hasElapsed()) {
     DisplayTime();
-    nbd = new NonBlockingDelay(1000);
+    displayTimeDelay->reset();
   }
   //AntiTubePoisoning();
 }
 
+void UpdateTime() {
+
+  long newPos = hoursEnc.read() / 4;
+  
+  if (newPos != oldPos) {
+
+    RTCDateTime dt = rtc.getDateTime();
+    byte mins;
+    if (newPos > oldPos) {
+      mins = GetNewMinute(dt.minute, true);
+      rtc.setDateTime(dt.year, dt.month, dt.day, dt.hour, mins, dt.second);
+    } else {
+      mins = GetNewMinute(dt.minute, false);
+      rtc.setDateTime(dt.year, dt.month, dt.day, dt.hour, mins, dt.second);
+    }
+    Serial.print(" ");
+    Serial.println(mins);
+    oldPos = newPos;
+    DisplayTime();
+  }
+}
+
+uint8_t GetNewMinute(uint8_t minute, bool up) {
+
+  if (up == true) {
+    if (minute == 59) {
+      return 0;
+    } else {
+      return minute + 1;
+    }
+  } else {
+    if (minute == 0) {
+      return 59;
+    } else {
+      return minute - 1;
+    }
+  }
+}
+
 void DisplayTime() {
 
-  dta = clocka.getDateTime();
-  int h = dta.hour;
-  int m = dta.minute;
-  int s = dta.second;
+  RTCDateTime dt = rtc.getDateTime();
+  byte h = dt.hour;
+  byte m = dt.minute;
+  byte s = dt.second;
 
   if (h > 12) {
     h = h - 12;
   }
 
-  int h1 = h/10;
-  int h2 = h%10;
-  int m1 = m/10;
-  int m2 = m%10;
-  int s1 = s/10;
-  int s2 = s%10;
-  // Serial.print(h1);
-  // Serial.print(h2);
-  // Serial.print(m1);
-  // Serial.print(m2);
-  Serial.print(s1);
-  Serial.println(s2);
-
-  if (h1 == 0) {
-    tubes[H1]->show_digit(0, 127, 0);
-  } else {
-    tubes[H1]->show_digit(h1, 127, 0);
-  }
-
-  tubes[H2]->show_digit(h2, 127, 0);
-  tubes[M1]->show_digit(m1, 127, 0);
-  tubes[M2]->show_digit(m2, 127, 0);
-  tubes[S1]->show_digit(s1, 127, 0);
-  tubes[S2]->show_digit(s2, 127, 0);
-
+  tubes[H1]->show_digit(h/10, 127, 0);
+  tubes[H2]->show_digit(h%10, 127, 0);
+  tubes[M1]->show_digit(m/10, 127, 0);
+  tubes[M2]->show_digit(m%10, 127, 0);
+  tubes[S1]->show_digit(s/10, 127, 0);
+  tubes[S2]->show_digit(s%10, 127, 0);
 }
 
 void AntiTubePoisoning() {
