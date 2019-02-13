@@ -20,8 +20,14 @@ exixe *tubes[TUBE_COUNT];
 
 DS3231 rtc;
 NonBlockingDelay *displayTimeDelay;
-Encoder hoursEnc(40, 41);
-long oldPos = 0;
+
+Encoder hoursEnc(46, 47);
+Encoder minutesEnc(42, 43);
+Encoder secondsEnc(38, 39);
+
+long oldHoursPosition = 0;
+long oldMinutesPosition = 0;
+long oldSecondsPosition = 0;
 
 void setup() {
 
@@ -35,14 +41,16 @@ void setup() {
   Serial.begin(9600);      // open the serial port at 9600 bps:
 
   rtc.begin();
-  rtc.setDateTime(__DATE__, __TIME__);
+//  rtc.setDateTime(__DATE__, __TIME__);
 
   displayTimeDelay = new NonBlockingDelay(1000);
 }
 
 void loop() {
 
-  UpdateTime();
+  UpdateHours();
+  UpdateMinutes();
+  UpdateSeconds();
 
   if (displayTimeDelay->hasElapsed()) {
     DisplayTime();
@@ -51,27 +59,92 @@ void loop() {
   //AntiTubePoisoning();
 }
 
-void UpdateTime() {
+void UpdateHours() {
 
-  long newPos = hoursEnc.read() / 4;
+  long newHoursPosition = hoursEnc.read() / 4;
   
-  if (newPos != oldPos) {
+  if (newHoursPosition != oldHoursPosition) {
 
     RTCDateTime dt = rtc.getDateTime();
-    byte mins;
-    if (newPos > oldPos) {
-      mins = GetNewMinute(dt.minute, true);
-      rtc.setDateTime(dt.year, dt.month, dt.day, dt.hour, mins, dt.second);
+    byte hrs, mins, secs;
+
+    if (newHoursPosition > oldHoursPosition) {
+      hrs = GetNewHour(dt.hour, true);
     } else {
-      mins = GetNewMinute(dt.minute, false);
-      rtc.setDateTime(dt.year, dt.month, dt.day, dt.hour, mins, dt.second);
+      hrs = GetNewHour(dt.hour, false);
     }
-    Serial.print(" ");
-    Serial.println(mins);
-    oldPos = newPos;
+
+    rtc.setDateTime(dt.year, dt.month, dt.day, hrs, dt.minute, dt.second);
+
+    oldHoursPosition = newHoursPosition;
+
     DisplayTime();
   }
 }
+
+void UpdateMinutes() {
+
+  long newMinutesPosition = minutesEnc.read() / 4;
+  
+  if (newMinutesPosition != oldMinutesPosition) {
+
+    RTCDateTime dt = rtc.getDateTime();
+    byte mins;
+
+    if (newMinutesPosition > oldMinutesPosition) {
+      mins = GetNewMinute(dt.minute, true);
+    } else {
+      mins = GetNewMinute(dt.minute, false);
+    }
+
+    rtc.setDateTime(dt.year, dt.month, dt.day, dt.hour, mins, dt.second);
+
+    oldMinutesPosition = newMinutesPosition;
+
+    DisplayTime();
+  }
+}
+
+void UpdateSeconds() {
+
+  long newSecondsPosition = secondsEnc.read() / 4;
+  
+  if (newSecondsPosition != oldSecondsPosition) {
+
+    RTCDateTime dt = rtc.getDateTime();
+    byte secs;
+
+    if (newSecondsPosition > oldSecondsPosition) {
+      secs = GetNewMinute(dt.second, true);
+    } else {
+      secs = GetNewMinute(dt.second, false);
+    }
+
+    rtc.setDateTime(dt.year, dt.month, dt.day, dt.hour, dt.minute, secs);
+
+    oldSecondsPosition = newSecondsPosition;
+
+    DisplayTime();
+  }
+}
+
+uint8_t GetNewHour(uint8_t hour, bool up) {
+
+  if (up == true) {
+    if (hour == 12) {
+      return 1;
+    } else {
+      return hour + 1;
+    }
+  } else {
+    if (hour == 1) {
+      return 12;
+    } else {
+      return hour - 1;
+    }
+  }
+}
+
 
 uint8_t GetNewMinute(uint8_t minute, bool up) {
 
