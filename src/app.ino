@@ -4,30 +4,37 @@
 #include "Encoder.h"
 #include "limits.h"
 
-const int TUBE_COUNT = 6;
-const int MAX_BRIGHTNESS = 127;
-const int DIGIT_INCREMENT_DELAY = 65;
+const byte TUBE_COUNT = 6;
+const byte ENCODER_COUNT = 3;
+const byte MAX_BRIGHTNESS = 127;
+const byte DIGIT_INCREMENT_DELAY = 65;
 
-const int H1 = 0;
-const int H2 = 1;
-const int M1 = 2;
-const int M2 = 3;
-const int S1 = 4;
-const int S2 = 5;
+const byte H1 = 0;
+const byte H2 = 1;
+const byte M1 = 2;
+const byte M2 = 3;
+const byte S1 = 4;
+const byte S2 = 5;
 
-int tubeSsPins[TUBE_COUNT] = {22, 23, 24, 25, 26, 27};
+byte tubeSsPins[TUBE_COUNT] = {22, 23, 24, 25, 26, 27};
 exixe *tubes[TUBE_COUNT];
 
 DS3231 rtc;
 NonBlockingDelay *displayTimeDelay;
 
-Encoder hoursEnc(46, 47);
-Encoder minutesEnc(42, 43);
-Encoder secondsEnc(38, 39);
+byte encoderPins[ENCODER_COUNT][2] = {{46, 47}, {42, 43}, {38, 39}};
+Encoder *encoders[ENCODER_COUNT];
+long oldEncoderPositions[ENCODER_COUNT] = {0, 0, 0};
 
-long oldHoursPosition = 0;
-long oldMinutesPosition = 0;
-long oldSecondsPosition = 0;
+struct EncoderRanges {
+  byte upper_roll;
+  byte lower_roll;
+  int  timeToAdd;  // the number of seconds to add to unixtime to increment by the unit of time
+};
+
+const EncoderRanges encoderRanges[ENCODER_COUNT] = {
+  {12, 1, 3600}, {59, 0, 60}, {59, 0, 1}
+};
 
 void setup() {
 
@@ -35,22 +42,27 @@ void setup() {
     tubes[i] = new exixe(tubeSsPins[i]);
   }
 
+  for (int i = 0; i < ENCODER_COUNT; i++) {
+    encoders[i] = new Encoder(encoderPins[i][0], encoderPins[i][1]);
+  }
+
   tubes[H1]->spi_init();
   randomSeed(analogRead(0));
 
-  Serial.begin(9600);      // open the serial port at 9600 bps:
+  Serial.begin(9600);
 
   rtc.begin();
-//  rtc.setDateTime(__DATE__, __TIME__);
 
   displayTimeDelay = new NonBlockingDelay(1000);
 }
 
 void loop() {
 
-  UpdateHours();
-  UpdateMinutes();
-  UpdateSeconds();
+  for (byte i = 0; i < ENCODER_COUNT; i++) {
+    Encoder *encoder = encoders[i];
+    EncoderRanges encoderRange = encoderRanges[i];
+    oldEncoderPositions[i] = UpdateTime(encoder, encoderRange, oldEncoderPositions[i]);
+  }
 
   if (displayTimeDelay->hasElapsed()) {
     DisplayTime();
@@ -59,108 +71,35 @@ void loop() {
   //AntiTubePoisoning();
 }
 
-void UpdateHours() {
+long UpdateTime(Encoder *encoder, EncoderRanges &encoderRange, long oldPosition) {
+  long newPosition = encoder->read() / 4;
 
-  long newHoursPosition = hoursEnc.read() / 4;
-  
-  if (newHoursPosition != oldHoursPosition) {
-
-    RTCDateTime dt = rtc.getDateTime();
-    byte hrs, mins, secs;
-
-    if (newHoursPosition > oldHoursPosition) {
-      hrs = GetNewHour(dt.hour, true);
-    } else {
-      hrs = GetNewHour(dt.hour, false);
-    }
-
-    rtc.setDateTime(dt.year, dt.month, dt.day, hrs, dt.minute, dt.second);
-
-    oldHoursPosition = newHoursPosition;
-
-    DisplayTime();
-  }
-}
-
-void UpdateMinutes() {
-
-  long newMinutesPosition = minutesEnc.read() / 4;
-  
-  if (newMinutesPosition != oldMinutesPosition) {
+  if (newPosition != oldPosition) {
 
     RTCDateTime dt = rtc.getDateTime();
-    byte mins;
+    
+    bool increasing = false;
 
-    if (newMinutesPosition > oldMinutesPosition) {
-      mins = GetNewMinute(dt.minute, true);
-    } else {
-      mins = GetNewMinute(dt.minute, false);
+    if (newPosition > oldPosition) {
+      increasing = true;
     }
 
-    rtc.setDateTime(dt.year, dt.month, dt.day, dt.hour, mins, dt.second);
-
-    oldMinutesPosition = newMinutesPosition;
-
+    uint32_t newTime = GetNewTime(dt.unixtime, encoderRange.timeToAdd, increasing);
+    rtc.setDateTime(newTime);
     DisplayTime();
+    //Serial.println(newTime);
   }
+
+  return newPosition;
 }
 
-void UpdateSeconds() {
+uint32_t GetNewTime(uint32_t currentTime, int offset, bool increasing) {
 
-  long newSecondsPosition = secondsEnc.read() / 4;
-  
-  if (newSecondsPosition != oldSecondsPosition) {
-
-    RTCDateTime dt = rtc.getDateTime();
-    byte secs;
-
-    if (newSecondsPosition > oldSecondsPosition) {
-      secs = GetNewMinute(dt.second, true);
-    } else {
-      secs = GetNewMinute(dt.second, false);
-    }
-
-    rtc.setDateTime(dt.year, dt.month, dt.day, dt.hour, dt.minute, secs);
-
-    oldSecondsPosition = newSecondsPosition;
-
-    DisplayTime();
+  if (increasing == true) {
+    return currentTime + offset;
   }
-}
 
-uint8_t GetNewHour(uint8_t hour, bool up) {
-
-  if (up == true) {
-    if (hour == 12) {
-      return 1;
-    } else {
-      return hour + 1;
-    }
-  } else {
-    if (hour == 1) {
-      return 12;
-    } else {
-      return hour - 1;
-    }
-  }
-}
-
-
-uint8_t GetNewMinute(uint8_t minute, bool up) {
-
-  if (up == true) {
-    if (minute == 59) {
-      return 0;
-    } else {
-      return minute + 1;
-    }
-  } else {
-    if (minute == 0) {
-      return 59;
-    } else {
-      return minute - 1;
-    }
-  }
+  return currentTime - offset;
 }
 
 void DisplayTime() {
@@ -170,16 +109,16 @@ void DisplayTime() {
   byte m = dt.minute;
   byte s = dt.second;
 
-  if (h > 12) {
-    h = h - 12;
-  }
+  // if (h > 12) {
+  //   h = h - 12;
+  // }
 
-  tubes[H1]->show_digit(h/10, 127, 0);
-  tubes[H2]->show_digit(h%10, 127, 0);
-  tubes[M1]->show_digit(m/10, 127, 0);
-  tubes[M2]->show_digit(m%10, 127, 0);
-  tubes[S1]->show_digit(s/10, 127, 0);
-  tubes[S2]->show_digit(s%10, 127, 0);
+  tubes[H1]->show_digit(h/10, MAX_BRIGHTNESS, 0);
+  tubes[H2]->show_digit(h%10, MAX_BRIGHTNESS, 0);
+  tubes[M1]->show_digit(m/10, MAX_BRIGHTNESS, 0);
+  tubes[M2]->show_digit(m%10, MAX_BRIGHTNESS, 0);
+  tubes[S1]->show_digit(s/10, MAX_BRIGHTNESS, 0);
+  tubes[S2]->show_digit(s%10, MAX_BRIGHTNESS, 0);
 }
 
 void AntiTubePoisoning() {
