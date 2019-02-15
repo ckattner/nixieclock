@@ -3,6 +3,7 @@
 #include "NonBlockingDelay.h"
 #include "Encoder.h"
 #include "limits.h"
+#include "JC_Button.h"
 
 const byte TUBE_COUNT = 6;
 const byte ENCODER_COUNT = 3;
@@ -20,11 +21,13 @@ byte tubeSsPins[TUBE_COUNT] = {22, 23, 24, 25, 26, 27};
 exixe *tubes[TUBE_COUNT];
 
 DS3231 rtc;
-NonBlockingDelay *displayTimeDelay;
+NonBlockingDelay *displayTimeDelay, *displayDateDelay;
 
 byte encoderPins[ENCODER_COUNT][2] = {{46, 47}, {42, 43}, {38, 39}};
 Encoder *encoders[ENCODER_COUNT];
 long oldEncoderPositions[ENCODER_COUNT] = {0, 0, 0};
+
+Button myBtn(48);
 
 struct EncoderRanges {
   byte upper_roll;
@@ -37,6 +40,8 @@ const EncoderRanges encoderRanges[ENCODER_COUNT] = {
 };
 
 void setup() {
+
+  myBtn.begin();
 
   for(int i = 0; i < TUBE_COUNT; i++) {
     tubes[i] = new exixe(tubeSsPins[i]);
@@ -52,11 +57,25 @@ void setup() {
   Serial.begin(9600);
 
   rtc.begin();
+  rtc.setDateTime(__DATE__, __TIME__);
 
   displayTimeDelay = new NonBlockingDelay(1000);
+  displayDateDelay = new NonBlockingDelay(5000);
+
+  DisplayTime();
 }
 
+bool showDate = false;
+
 void loop() {
+
+  myBtn.read();
+
+  if (myBtn.isPressed()) {
+    DisplayDate();
+    Serial.println("pressed");
+    exit;
+  }
 
   for (byte i = 0; i < ENCODER_COUNT; i++) {
     Encoder *encoder = encoders[i];
@@ -64,11 +83,20 @@ void loop() {
     oldEncoderPositions[i] = UpdateTime(encoder, encoderRange, oldEncoderPositions[i]);
   }
 
-  if (displayTimeDelay->hasElapsed()) {
+  if (displayTimeDelay->hasElapsed() && !showDate) {
     DisplayTime();
     displayTimeDelay->reset();
   }
-  //AntiTubePoisoning();
+
+  if (displayDateDelay->hasElapsed()) {
+    showDate = false;
+  }
+
+  if (rtc.getDateTime().second == 1) {
+    showDate = true;
+    DisplayDate();
+    displayDateDelay->reset();
+  }
 }
 
 long UpdateTime(Encoder *encoder, EncoderRanges &encoderRange, long oldPosition) {
@@ -87,7 +115,6 @@ long UpdateTime(Encoder *encoder, EncoderRanges &encoderRange, long oldPosition)
     uint32_t newTime = GetNewTime(dt.unixtime, encoderRange.timeToAdd, increasing);
     rtc.setDateTime(newTime);
     DisplayTime();
-    //Serial.println(newTime);
   }
 
   return newPosition;
@@ -102,7 +129,45 @@ uint32_t GetNewTime(uint32_t currentTime, int offset, bool increasing) {
   return currentTime - offset;
 }
 
+byte redLevel = 0;
+byte blueLevel = 60;
+bool blueHigh = true;
+
+void MuxBacklight() {
+  const byte MAX_LED_BRIGHTNESS = 60;
+  const byte BRIGHTNESS_INCREMENT = 5;
+
+  byte loopPos = 60;
+
+  NonBlockingDelay d = NonBlockingDelay(100);
+
+  while (loopPos > 0) {
+    loopPos -= BRIGHTNESS_INCREMENT;
+
+    if (blueHigh) {
+      blueLevel -= BRIGHTNESS_INCREMENT;
+      redLevel += BRIGHTNESS_INCREMENT;
+    } else {
+      blueLevel += BRIGHTNESS_INCREMENT;
+      redLevel -= BRIGHTNESS_INCREMENT;
+    }
+
+    for (int i = 0; i < TUBE_COUNT; i++) {
+      tubes[i]->set_led(redLevel, 0, blueLevel);
+    }
+
+    delay(100);
+  }
+
+  blueHigh = !blueHigh;
+
+}
+
 void DisplayTime() {
+
+  if (!blueHigh) {
+    MuxBacklight();
+  }
 
   RTCDateTime dt = rtc.getDateTime();
   byte h = dt.hour;
@@ -121,7 +186,30 @@ void DisplayTime() {
   tubes[S2]->show_digit(s%10, MAX_BRIGHTNESS, 0);
 }
 
+void DisplayDate() {
+
+  if (blueHigh) {
+    MuxBacklight();
+  }
+
+  RTCDateTime dt = rtc.getDateTime();
+  byte h = dt.month;
+  byte m = dt.day;
+  uint16_t s = dt.year;
+
+  tubes[H1]->show_digit(h/10, MAX_BRIGHTNESS, 0);
+  tubes[H2]->show_digit(h%10, MAX_BRIGHTNESS, 0);
+  tubes[M1]->show_digit(m/10, MAX_BRIGHTNESS, 0);
+  tubes[M2]->show_digit(m%10, MAX_BRIGHTNESS, 0);
+  tubes[S1]->show_digit(s/10, MAX_BRIGHTNESS, 0);
+  tubes[S2]->show_digit(s%10, MAX_BRIGHTNESS, 0);
+}
+
 void AntiTubePoisoning() {
+
+  for (byte i = 0; i < TUBE_COUNT; i++) {
+    tubes[i]->clear();
+  }
 
   int loopCount = 2 * TUBE_COUNT - 1;
 
@@ -134,7 +222,7 @@ void AntiTubePoisoning() {
         if (tubePosition <= loopPosition)
         {
           for (int hour = 0; hour <= 9; hour++) {
-            tubes[tubePosition]->show_digit(hour, MAX_BRIGHTNESS/4, 0);
+            tubes[tubePosition]->show_digit(hour, MAX_BRIGHTNESS, 0);
             delay(DIGIT_INCREMENT_DELAY);
           }
         }
@@ -155,7 +243,7 @@ void AntiTubePoisoning() {
         else
         {
           for (int hour = 0; hour <= 9; hour++) {
-            tubes[tubePosition]->show_digit(hour, MAX_BRIGHTNESS/4, 0);
+            tubes[tubePosition]->show_digit(hour, MAX_BRIGHTNESS, 0);
             delay(DIGIT_INCREMENT_DELAY);
           }
         }
