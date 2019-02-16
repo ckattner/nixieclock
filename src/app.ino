@@ -29,7 +29,7 @@ const byte tubeSsPins[TUBE_COUNT] = {22, 23, 24, 25, 26, 27};
 exixe *tubes[TUBE_COUNT];
 
 DS3231 rtc;
-NonBlockingDelay *displayDateDelay, *buttonDebounceTimer, *backlightFadeTimer;
+NonBlockingDelay *displayDateDelay, *buttonDebounceTimer, *backlightFadeTimer, *antiPoisoningTimer;
 
 enum direction_t : byte {
     NONE,
@@ -46,7 +46,9 @@ const uint16_t timeOffsets[ENCODER_COUNT] = {3600, 60, 1};
 
 unsigned char red = 0, green = 0, blue = 60;
 
-bool buttonShowDateState = false;
+uint8_t loop_count = 0;
+
+bool buttonShowDateState = false, inAntiPoisoning = false;
 
 void setup() {
   Serial.begin(9600);
@@ -67,6 +69,52 @@ void loop() {
     ReadEncoders();
     UpdateClock();
     UpdateBacklight();
+    AntiTubePoisoning();
+}
+
+void AntiTubePoisoning() {
+
+    if (!inAntiPoisoning) {
+      return;
+    }
+
+  const int frames[15][6] = {
+    { 0, 10, 10, 10, 10, 10},
+    { 1,  0, 10, 10, 10, 10},
+    { 2,  1,  0, 10, 10, 10},
+    { 3,  2,  1,  0, 10, 10},
+    { 4,  3,  2,  1,  0, 10},
+    { 5,  4,  3,  2,  1,  0},
+    { 6,  5,  4,  3,  2,  1},
+    { 7,  6,  5,  4,  3,  2},
+    { 8,  7,  6,  5,  4,  3},
+    { 9,  8,  7,  6,  5,  4},
+    {10,  9,  8,  7,  6,  5},
+    {10, 10,  9,  8,  7,  6},
+    {10, 10, 10,  9,  8,  7},
+    {10, 10, 10, 10,  9,  8},
+    {10, 10, 10, 10, 10,  9}
+  };
+
+  if (antiPoisoningTimer->hasElapsed()) {
+
+    if (loop_count == 15) {
+        loop_count = 0;
+        inAntiPoisoning = false;
+    }
+
+    for (uint8_t tube_index = 0; tube_index < TUBE_COUNT; tube_index++) {
+
+      tubes[tube_index]->clear();
+
+      if (frames[loop_count][tube_index] != 10) {
+        tubes[tube_index]->show_digit(frames[loop_count][tube_index], 127, 0);
+      }
+    }
+
+    loop_count++;
+    antiPoisoningTimer->reset();
+  }
 }
 
 void ReadClock() {
@@ -76,6 +124,11 @@ void ReadClock() {
     if (dt.second == 0) {
         buttonShowDateState = true;
         displayDateDelay->reset();
+    }
+
+    if (dt.minute % 15 == 0 && dt.second == 30) {
+        inAntiPoisoning = true;
+        antiPoisoningTimer->reset();
     }
 }
 
@@ -179,6 +232,7 @@ void ReadEncoders() {
 }
 
 void UpdateDateDisplayState() {
+
     if (buttonShowDateState) {
         if (displayDateDelay->hasElapsed()) {
             buttonShowDateState = false;
@@ -187,10 +241,14 @@ void UpdateDateDisplayState() {
 }
 
 void UpdateDisplayState() {
-    if (buttonShowDateState == true) {
-        DisplayDate();
-    } else {
-        DisplayTime();
+
+    if (!inAntiPoisoning) {
+
+        if (buttonShowDateState == true) {
+            DisplayDate();
+        } else {
+            DisplayTime();
+        }
     }
 }
 
@@ -241,53 +299,6 @@ void UpdateTubes(uint8_t l, uint8_t c, uint16_t r) {
     tubes[S2]->show_digit(r%10, MAX_BRIGHTNESS, 0);
 }
 
-void AntiTubePoisoning() {
-
-  for (byte i = 0; i < TUBE_COUNT; i++) {
-    tubes[i]->clear();
-  }
-
-  int loopCount = 2 * TUBE_COUNT - 1;
-
-  for (int loopPosition = 0; loopPosition < loopCount; loopPosition++)
-  {
-    if (loopPosition <= loopCount / 2)
-    {
-      for (int tubePosition = 0; tubePosition < TUBE_COUNT; tubePosition++)
-      {
-        if (tubePosition <= loopPosition)
-        {
-          for (int hour = 0; hour <= 9; hour++) {
-            tubes[tubePosition]->show_digit(hour, MAX_BRIGHTNESS, 0);
-            delay(DIGIT_INCREMENT_DELAY);
-          }
-        }
-        else
-        {
-          tubes[tubePosition]->clear();
-        }
-      }
-    }
-    else
-    {
-      for (int tubePosition = 0; tubePosition < TUBE_COUNT; tubePosition++)
-      {
-        if (tubePosition <= loopPosition - TUBE_COUNT)
-        {
-          tubes[tubePosition]->clear();
-        }
-        else
-        {
-          for (int hour = 0; hour <= 9; hour++) {
-            tubes[tubePosition]->show_digit(hour, MAX_BRIGHTNESS, 0);
-            delay(DIGIT_INCREMENT_DELAY);
-          }
-        }
-      }
-    }
-  }
-}
-
 void InitializeTubes() {
     for(int i = 0; i < TUBE_COUNT; i++) {
       tubes[i] = new exixe(tubeSsPins[i]);
@@ -321,4 +332,5 @@ void InitializeDelayTimers() {
     displayDateDelay = new NonBlockingDelay(5000);
     buttonDebounceTimer = new NonBlockingDelay(250);
     backlightFadeTimer = new NonBlockingDelay(65);
+    antiPoisoningTimer = new NonBlockingDelay(250);
 }
