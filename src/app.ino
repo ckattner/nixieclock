@@ -44,6 +44,8 @@ long oldEncoderPositions[ENCODER_COUNT] = {0, 0, 0};
 direction_t encoderDirections[ENCODER_COUNT] = { NONE, NONE, NONE };
 const uint16_t timeOffsets[ENCODER_COUNT] = {3600, 60, 1};
 
+unsigned char red = 0, green = 0, blue = 60;
+
 bool buttonShowDateState = false;
 
 void setup() {
@@ -58,6 +60,7 @@ void setup() {
 }
 
 void loop() {
+    ReadClock();
     ReadButtons();
     UpdateDisplayState();
     UpdateDateDisplayState();
@@ -66,7 +69,15 @@ void loop() {
     UpdateBacklight();
 }
 
-unsigned char red = 0, green = 0, blue = 60;
+void ReadClock() {
+
+    RTCDateTime dt = rtc.getDateTime();
+
+    if (dt.second == 0) {
+        buttonShowDateState = true;
+        displayDateDelay->reset();
+    }
+}
 
 void UpdateBacklight() {
 
