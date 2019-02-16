@@ -29,7 +29,7 @@ const byte tubeSsPins[TUBE_COUNT] = {22, 23, 24, 25, 26, 27};
 exixe *tubes[TUBE_COUNT];
 
 DS3231 rtc;
-NonBlockingDelay *displayDateDelay, *buttonDebounceTimer;
+NonBlockingDelay *displayDateDelay, *buttonDebounceTimer, *backlightFadeTimer;
 
 enum direction_t : byte {
     NONE,
@@ -63,6 +63,32 @@ void loop() {
     UpdateDateDisplayState();
     ReadEncoders();
     UpdateClock();
+    UpdateBacklight();
+}
+
+unsigned char red = 0, green = 0, blue = 60;
+
+void UpdateBacklight() {
+
+    if (backlightFadeTimer->hasElapsed()) {
+        if (buttonShowDateState == true) {
+            if (red < 60) {
+                red += 5;
+                blue -= 5;
+            }
+        } else {
+            if (blue < 60) {
+                blue += 5;
+                red -= 5;
+            }
+        }
+
+        for (uint8_t i = 0; i < TUBE_COUNT; i++) {
+            tubes[i]->set_led(red, green, blue);
+        }
+
+        backlightFadeTimer->reset();
+    }
 }
 
 void UpdateClock() {
@@ -195,7 +221,7 @@ void DisplayDate() {
 }
 
 void UpdateTubes(uint8_t l, uint8_t c, uint16_t r) {
-  
+
     tubes[H1]->show_digit(l/10, MAX_BRIGHTNESS, 0);
     tubes[H2]->show_digit(l%10, MAX_BRIGHTNESS, 0);
     tubes[M1]->show_digit(c/10, MAX_BRIGHTNESS, 0);
@@ -283,4 +309,5 @@ void InitializeRTC() {
 void InitializeDelayTimers() {
     displayDateDelay = new NonBlockingDelay(5000);
     buttonDebounceTimer = new NonBlockingDelay(250);
+    backlightFadeTimer = new NonBlockingDelay(65);
 }
