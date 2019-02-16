@@ -1,9 +1,8 @@
-#include "exixe.h"
-#include "DS3231.h"
-#include "NonBlockingDelay.h"
-#include "Encoder.h"
-#include "limits.h"
-#include "JC_Button.h"
+#include <exixe.h>
+#include <DS3231.h>
+#include <NonBlockingDelay.h>
+#include <Encoder.h>
+#include <limits.h>
 
 const byte TUBE_COUNT = 6;
 const byte ENCODER_COUNT = 3;
@@ -17,192 +16,192 @@ const byte M2 = 3;
 const byte S1 = 4;
 const byte S2 = 5;
 
-byte tubeSsPins[TUBE_COUNT] = {22, 23, 24, 25, 26, 27};
+const uint32_t SECONDS_PER_YEAR = 31536000;
+const uint32_t SECONDS_PER_LEAP_YEAR = 31622400;
+
+// 31 28 31   30 31 30   31 31 30   31 30 31
+const uint32_t seconds_per_month[] = {
+    2678400, 2419200, 2678400, 2592000, 2678400, 2592000,
+    2678400, 2678400, 2592000, 2678400, 2592000, 2678400
+};
+
+const byte tubeSsPins[TUBE_COUNT] = {22, 23, 24, 25, 26, 27};
 exixe *tubes[TUBE_COUNT];
 
 DS3231 rtc;
-NonBlockingDelay *displayTimeDelay, *displayDateDelay;
+NonBlockingDelay *displayDateDelay, *buttonDebounceTimer;
 
-byte encoderPins[ENCODER_COUNT][2] = {{46, 47}, {42, 43}, {38, 39}};
+enum direction_t : byte {
+    NONE,
+    UP,
+    DOWN
+};
+
+const byte encoderPins[ENCODER_COUNT][2] = {{46, 47}, {42, 43}, {38, 39}};
+const byte encoderButtonPins[ENCODER_COUNT] = {48, 44, 40};
 Encoder *encoders[ENCODER_COUNT];
 long oldEncoderPositions[ENCODER_COUNT] = {0, 0, 0};
+direction_t encoderDirections[ENCODER_COUNT] = { NONE, NONE, NONE };
+const uint16_t timeOffsets[ENCODER_COUNT] = {3600, 60, 1};
 
-Button myBtn(48);
-
-struct EncoderRanges {
-  byte upper_roll;
-  byte lower_roll;
-  int  timeToAdd;  // the number of seconds to add to unixtime to increment by the unit of time
-};
-
-const EncoderRanges encoderRanges[ENCODER_COUNT] = {
-  {12, 1, 3600}, {59, 0, 60}, {59, 0, 1}
-};
+bool buttonShowDateState = false;
 
 void setup() {
-
-  myBtn.begin();
-
-  for(int i = 0; i < TUBE_COUNT; i++) {
-    tubes[i] = new exixe(tubeSsPins[i]);
-  }
-
-  for (int i = 0; i < ENCODER_COUNT; i++) {
-    encoders[i] = new Encoder(encoderPins[i][0], encoderPins[i][1]);
-  }
-
-  tubes[H1]->spi_init();
-  randomSeed(analogRead(0));
-
   Serial.begin(9600);
 
-  rtc.begin();
-  rtc.setDateTime(__DATE__, __TIME__);
-
-  displayTimeDelay = new NonBlockingDelay(1000);
-  displayDateDelay = new NonBlockingDelay(5000);
-
-  DisplayTime();
+  InitializeTubes();
+  InitialzieEncoders();
+  InitializeEncoderButtons();
+  InitializeSPI();
+  InitializeRTC();
+  InitializeDelayTimers();
 }
-
-bool showDate = false;
 
 void loop() {
-
-  myBtn.read();
-
-  if (myBtn.isPressed()) {
-    DisplayDate();
-    Serial.println("pressed");
-    exit;
-  }
-
-  for (byte i = 0; i < ENCODER_COUNT; i++) {
-    Encoder *encoder = encoders[i];
-    EncoderRanges encoderRange = encoderRanges[i];
-    oldEncoderPositions[i] = UpdateTime(encoder, encoderRange, oldEncoderPositions[i]);
-  }
-
-  if (displayTimeDelay->hasElapsed() && !showDate) {
-    DisplayTime();
-    displayTimeDelay->reset();
-  }
-
-  if (displayDateDelay->hasElapsed()) {
-    showDate = false;
-  }
-
-  if (rtc.getDateTime().second == 1) {
-    showDate = true;
-    DisplayDate();
-    displayDateDelay->reset();
-  }
+    ReadButtons();
+    UpdateDisplayState();
+    UpdateDateDisplayState();
+    ReadEncoders();
+    UpdateClock();
 }
 
-long UpdateTime(Encoder *encoder, EncoderRanges &encoderRange, long oldPosition) {
-  long newPosition = encoder->read() / 4;
-
-  if (newPosition != oldPosition) {
+void UpdateClock() {
 
     RTCDateTime dt = rtc.getDateTime();
-    
-    bool increasing = false;
 
-    if (newPosition > oldPosition) {
-      increasing = true;
-    }
-
-    uint32_t newTime = GetNewTime(dt.unixtime, encoderRange.timeToAdd, increasing);
-    rtc.setDateTime(newTime);
-    DisplayTime();
-  }
-
-  return newPosition;
-}
-
-uint32_t GetNewTime(uint32_t currentTime, int offset, bool increasing) {
-
-  if (increasing == true) {
-    return currentTime + offset;
-  }
-
-  return currentTime - offset;
-}
-
-byte redLevel = 0;
-byte blueLevel = 60;
-bool blueHigh = true;
-
-void MuxBacklight() {
-  const byte MAX_LED_BRIGHTNESS = 60;
-  const byte BRIGHTNESS_INCREMENT = 5;
-
-  byte loopPos = 60;
-
-  NonBlockingDelay d = NonBlockingDelay(100);
-
-  while (loopPos > 0) {
-    loopPos -= BRIGHTNESS_INCREMENT;
-
-    if (blueHigh) {
-      blueLevel -= BRIGHTNESS_INCREMENT;
-      redLevel += BRIGHTNESS_INCREMENT;
+    if (buttonShowDateState == true) {
+        UpdateDate(dt.unixtime, dt.month, dt.year);
     } else {
-      blueLevel += BRIGHTNESS_INCREMENT;
-      redLevel -= BRIGHTNESS_INCREMENT;
+        UpdateTime(dt.unixtime);
     }
+}
 
-    for (int i = 0; i < TUBE_COUNT; i++) {
-      tubes[i]->set_led(redLevel, 0, blueLevel);
+void UpdateDate(uint32_t unixtime, uint8_t month, uint16_t year) {
+
+    for (uint8_t i = 0; i < ENCODER_COUNT; i++) {
+
+        if (encoderDirections[i] != NONE) {
+            uint32_t offset = 0;
+
+            switch (i) {
+              case 0:
+                offset = seconds_per_month[month];
+                break;
+              case 1:
+                offset = 86400;
+                break;
+              case 2:
+                offset = (year % 4 == 0) ? SECONDS_PER_LEAP_YEAR : SECONDS_PER_YEAR;
+                break;
+            }
+
+            offset = (encoderDirections[i] == DOWN) ? -1 * offset : offset;
+            uint32_t newTime = unixtime + offset;
+            rtc.setDateTime(newTime);
+            encoderDirections[i] = NONE;
+            displayDateDelay->reset();
+        }
     }
+}
 
-    delay(100);
-  }
+void UpdateTime(uint32_t unixtime) {
 
-  blueHigh = !blueHigh;
+    for (uint8_t i = 0; i < ENCODER_COUNT; i++) {
 
+        if (encoderDirections[i] != NONE) {
+
+            uint32_t offset = (encoderDirections[i] == DOWN) ? (-1 * timeOffsets[i]) : (timeOffsets[i]);
+            uint32_t newTime = unixtime + offset;
+            rtc.setDateTime(newTime);
+            encoderDirections[i] = NONE;
+        }
+    }
+}
+
+void ReadEncoders() {
+
+    for (byte i = 0; i < ENCODER_COUNT; i++) {
+        Encoder *encoder = encoders[i];
+
+        long encoderPosition = encoder->read() / 4;
+
+        if (encoderPosition > oldEncoderPositions[i]) {
+            encoderDirections[i] = UP;
+        }
+
+        if (encoderPosition < oldEncoderPositions[i]) {
+            encoderDirections[i] = DOWN;
+        }
+
+        if (encoderPosition == oldEncoderPositions[i]) {
+            encoderDirections[i] = NONE;
+        }
+
+        oldEncoderPositions[i] = encoderPosition;
+    }
+}
+
+void UpdateDateDisplayState() {
+    if (buttonShowDateState) {
+        if (displayDateDelay->hasElapsed()) {
+            buttonShowDateState = false;
+        }
+    }
+}
+
+void UpdateDisplayState() {
+    if (buttonShowDateState == true) {
+        DisplayDate();
+    } else {
+        DisplayTime();
+    }
+}
+
+void ReadButtons() {
+
+    if (buttonDebounceTimer->hasElapsed()) {
+
+        for (byte i = 0; i < ENCODER_COUNT; i++) {
+
+            if (digitalRead(encoderButtonPins[i]) == LOW) {
+
+                buttonShowDateState = !buttonShowDateState;
+                buttonDebounceTimer->reset();
+                displayDateDelay->reset();
+                return;
+            }
+        }
+    }
 }
 
 void DisplayTime() {
 
-  if (!blueHigh) {
-    MuxBacklight();
-  }
+    RTCDateTime dt = rtc.getDateTime();
+    uint8_t h = dt.hour;
+    uint8_t m = dt.minute;
+    uint8_t s = dt.second;
 
-  RTCDateTime dt = rtc.getDateTime();
-  byte h = dt.hour;
-  byte m = dt.minute;
-  byte s = dt.second;
-
-  // if (h > 12) {
-  //   h = h - 12;
-  // }
-
-  tubes[H1]->show_digit(h/10, MAX_BRIGHTNESS, 0);
-  tubes[H2]->show_digit(h%10, MAX_BRIGHTNESS, 0);
-  tubes[M1]->show_digit(m/10, MAX_BRIGHTNESS, 0);
-  tubes[M2]->show_digit(m%10, MAX_BRIGHTNESS, 0);
-  tubes[S1]->show_digit(s/10, MAX_BRIGHTNESS, 0);
-  tubes[S2]->show_digit(s%10, MAX_BRIGHTNESS, 0);
+    UpdateTubes(h, m, s);
 }
 
 void DisplayDate() {
 
-  if (blueHigh) {
-    MuxBacklight();
-  }
+    RTCDateTime dt = rtc.getDateTime();
+    uint8_t m = dt.month;
+    uint8_t d = dt.day;
+    uint16_t y = dt.year;
 
-  RTCDateTime dt = rtc.getDateTime();
-  byte h = dt.month;
-  byte m = dt.day;
-  uint16_t s = dt.year;
+    UpdateTubes(m, d, y);
+}
 
-  tubes[H1]->show_digit(h/10, MAX_BRIGHTNESS, 0);
-  tubes[H2]->show_digit(h%10, MAX_BRIGHTNESS, 0);
-  tubes[M1]->show_digit(m/10, MAX_BRIGHTNESS, 0);
-  tubes[M2]->show_digit(m%10, MAX_BRIGHTNESS, 0);
-  tubes[S1]->show_digit(s/10, MAX_BRIGHTNESS, 0);
-  tubes[S2]->show_digit(s%10, MAX_BRIGHTNESS, 0);
+void UpdateTubes(uint8_t l, uint8_t c, uint16_t r) {
+  
+    tubes[H1]->show_digit(l/10, MAX_BRIGHTNESS, 0);
+    tubes[H2]->show_digit(l%10, MAX_BRIGHTNESS, 0);
+    tubes[M1]->show_digit(c/10, MAX_BRIGHTNESS, 0);
+    tubes[M2]->show_digit(c%10, MAX_BRIGHTNESS, 0);
+    tubes[S1]->show_digit(r/10, MAX_BRIGHTNESS, 0);
+    tubes[S2]->show_digit(r%10, MAX_BRIGHTNESS, 0);
 }
 
 void AntiTubePoisoning() {
@@ -250,4 +249,38 @@ void AntiTubePoisoning() {
       }
     }
   }
+}
+
+void InitializeTubes() {
+    for(int i = 0; i < TUBE_COUNT; i++) {
+      tubes[i] = new exixe(tubeSsPins[i]);
+    }
+}
+
+void InitialzieEncoders() {
+    for (int i = 0; i < ENCODER_COUNT; i++) {
+        encoders[i] = new Encoder(encoderPins[i][0], encoderPins[i][1]);
+    }
+}
+
+void InitializeEncoderButtons() {
+    for (byte i = 0; i < ENCODER_COUNT; i++) {
+        pinMode(encoderButtonPins[i], INPUT_PULLUP);
+    }
+}
+
+void InitializeSPI() {
+    // initialize SPI.  Only do this _once_ not once per tube.
+    tubes[H1]->spi_init();
+}
+
+void InitializeRTC() {
+    // setup the real time clock.
+    rtc.begin();
+//    rtc.setDateTime(__DATE__, __TIME__);
+}
+
+void InitializeDelayTimers() {
+    displayDateDelay = new NonBlockingDelay(5000);
+    buttonDebounceTimer = new NonBlockingDelay(250);
 }
