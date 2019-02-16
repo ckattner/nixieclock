@@ -1,7 +1,7 @@
-#include <exixe.h>
-#include <DS3231.h>
+#include <exixe.h>     // https://github.com/dekuNukem/exixe
+#include <DS3231.h>    // https://github.com/jarzebski/Arduino-DS3231
 #include <NonBlockingDelay.h>
-#include <Encoder.h>
+#include <Encoder.h>   // https://github.com/PaulStoffregen/Encoder
 #include <limits.h>
 
 const byte TUBE_COUNT = 6;
