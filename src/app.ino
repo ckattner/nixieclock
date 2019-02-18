@@ -8,6 +8,7 @@ const byte TUBE_COUNT = 6;
 const byte ENCODER_COUNT = 3;
 const byte MAX_BRIGHTNESS = 127;
 const byte DIGIT_INCREMENT_DELAY = 65;
+const byte ANTI_POISONING_FRAME_DELAY = 200;
 
 const byte H1 = 0;
 const byte H2 = 1;
@@ -29,6 +30,7 @@ const byte tubeSsPins[TUBE_COUNT] = {22, 23, 24, 25, 26, 27};
 exixe *tubes[TUBE_COUNT];
 
 DS3231 rtc;
+RTCDateTime dt;
 NonBlockingDelay *displayDateDelay, *buttonDebounceTimer, *backlightFadeTimer, *antiPoisoningTimer;
 
 enum direction_t : byte {
@@ -48,7 +50,15 @@ unsigned char red = 0, green = 0, blue = 60;
 
 uint8_t loop_count = 0;
 
-bool buttonShowDateState = false, inAntiPoisoning = false;
+enum display_state_t : byte {
+    TIME,
+    DATE,
+    ANTIPOISONING
+};
+
+display_state_t display_state = TIME;
+
+bool button_clicked = false;
 
 void setup() {
   Serial.begin(9600);
@@ -64,19 +74,18 @@ void setup() {
 void loop() {
     ReadClock();
     ReadButtons();
-    UpdateDisplayState();
-    UpdateDateDisplayState();
     ReadEncoders();
-    UpdateClock();
+
+    UpdateDisplayState();
+
+    UpdateDisplay();
+
+    UpdateDateTime();
+
     UpdateBacklight();
-    AntiTubePoisoning();
 }
 
-void AntiTubePoisoning() {
-
-    if (!inAntiPoisoning) {
-      return;
-    }
+void DisplayAntiTubePoisoning() {
 
   const int frames[15][6] = {
     { 0, 10, 10, 10, 10, 10},
@@ -100,12 +109,12 @@ void AntiTubePoisoning() {
 
     if (loop_count == 15) {
         loop_count = 0;
-        inAntiPoisoning = false;
     }
 
     for (uint8_t tube_index = 0; tube_index < TUBE_COUNT; tube_index++) {
 
       tubes[tube_index]->clear();
+      tubes[tube_index]->set_led(red, green, blue); // do this because clear() also unsets leds
 
       if (frames[loop_count][tube_index] != 10) {
         tubes[tube_index]->show_digit(frames[loop_count][tube_index], 127, 0);
@@ -117,34 +126,25 @@ void AntiTubePoisoning() {
   }
 }
 
-void ReadClock() {
-
-    RTCDateTime dt = rtc.getDateTime();
-
-    if (dt.second == 0) {
-        buttonShowDateState = true;
-        displayDateDelay->reset();
-    }
-
-    if (dt.minute % 15 == 0 && dt.second == 30) {
-        inAntiPoisoning = true;
-        antiPoisoningTimer->reset();
-    }
-}
-
 void UpdateBacklight() {
 
     if (backlightFadeTimer->hasElapsed()) {
-        if (buttonShowDateState == true) {
-            if (red < 60) {
-                red += 5;
-                blue -= 5;
-            }
-        } else {
-            if (blue < 60) {
-                blue += 5;
-                red -= 5;
-            }
+        switch (display_state) {
+            case DATE:
+                red = (red == 60) ? 60 : red + 5;
+                blue = (blue == 0) ? 0 : blue - 5;
+                green = (green == 0) ? 0 : green - 5;
+                break;
+            case TIME:
+                blue = (blue == 60) ? 60 : blue + 5;
+                red = (red == 0) ? 0 : red - 5;
+                green = (green == 0) ? 0 : green - 5;
+                break;
+            case  ANTIPOISONING:
+                green = (green == 60) ? 60 : green + 5;
+                red = (red == 0) ? 0 : red - 5;
+                blue = (blue == 0) ? 0 : blue - 5;
+                break;
         }
 
         for (uint8_t i = 0; i < TUBE_COUNT; i++) {
@@ -155,18 +155,15 @@ void UpdateBacklight() {
     }
 }
 
-void UpdateClock() {
-
-    RTCDateTime dt = rtc.getDateTime();
-
-    if (buttonShowDateState == true) {
-        UpdateDate(dt.unixtime, dt.month, dt.year);
-    } else {
-        UpdateTime(dt.unixtime);
+void UpdateDateTime() {
+    if (display_state == DATE) {
+        UpdateDate();
+    } else if (display_state == TIME) {
+        UpdateTime();
     }
 }
 
-void UpdateDate(uint32_t unixtime, uint8_t month, uint16_t year) {
+void UpdateDate() {
 
     for (uint8_t i = 0; i < ENCODER_COUNT; i++) {
 
@@ -175,18 +172,18 @@ void UpdateDate(uint32_t unixtime, uint8_t month, uint16_t year) {
 
             switch (i) {
               case 0:
-                offset = seconds_per_month[month];
+                offset = seconds_per_month[dt.month];
                 break;
               case 1:
                 offset = 86400;
                 break;
               case 2:
-                offset = (year % 4 == 0) ? SECONDS_PER_LEAP_YEAR : SECONDS_PER_YEAR;
+                offset = (dt.year % 4 == 0) ? SECONDS_PER_LEAP_YEAR : SECONDS_PER_YEAR;
                 break;
             }
 
             offset = (encoderDirections[i] == DOWN) ? -1 * offset : offset;
-            uint32_t newTime = unixtime + offset;
+            uint32_t newTime = dt.unixtime + offset;
             rtc.setDateTime(newTime);
             encoderDirections[i] = NONE;
             displayDateDelay->reset();
@@ -194,18 +191,23 @@ void UpdateDate(uint32_t unixtime, uint8_t month, uint16_t year) {
     }
 }
 
-void UpdateTime(uint32_t unixtime) {
+void UpdateTime() {
 
     for (uint8_t i = 0; i < ENCODER_COUNT; i++) {
 
         if (encoderDirections[i] != NONE) {
 
             uint32_t offset = (encoderDirections[i] == DOWN) ? (-1 * timeOffsets[i]) : (timeOffsets[i]);
-            uint32_t newTime = unixtime + offset;
+            uint32_t newTime = dt.unixtime + offset;
             rtc.setDateTime(newTime);
             encoderDirections[i] = NONE;
         }
     }
+}
+
+void ReadClock() {
+
+    dt = rtc.getDateTime();
 }
 
 void ReadEncoders() {
@@ -231,27 +233,6 @@ void ReadEncoders() {
     }
 }
 
-void UpdateDateDisplayState() {
-
-    if (buttonShowDateState) {
-        if (displayDateDelay->hasElapsed()) {
-            buttonShowDateState = false;
-        }
-    }
-}
-
-void UpdateDisplayState() {
-
-    if (!inAntiPoisoning) {
-
-        if (buttonShowDateState == true) {
-            DisplayDate();
-        } else {
-            DisplayTime();
-        }
-    }
-}
-
 void ReadButtons() {
 
     if (buttonDebounceTimer->hasElapsed()) {
@@ -260,12 +241,50 @@ void ReadButtons() {
 
             if (digitalRead(encoderButtonPins[i]) == LOW) {
 
-                buttonShowDateState = !buttonShowDateState;
+                button_clicked = !button_clicked;
+
                 buttonDebounceTimer->reset();
-                displayDateDelay->reset();
+
+                if (display_state == DATE) {
+                    displayDateDelay->reset();
+                }
+
                 return;
             }
         }
+    }
+}
+
+void UpdateDisplay() {
+
+    switch (display_state) {
+        case TIME:
+            DisplayTime();
+            break;
+        case DATE:
+            DisplayDate();
+            break;
+        case ANTIPOISONING:
+            DisplayAntiTubePoisoning();
+            break;
+    }
+}
+
+void UpdateDisplayState() {
+
+    if (dt.second >= 0 && dt.second <= 5 || button_clicked) {
+        display_state = DATE;
+        displayDateDelay->reset();
+    } else {
+        display_state = TIME;
+    }
+
+    if (dt.minute % 15 == 0 && dt.second >= 30 && dt.second <= 30 + ANTI_POISONING_FRAME_DELAY / 1000.0 * 14) {
+        display_state = ANTIPOISONING;
+    }
+
+    if (displayDateDelay->hasElapsed()) {
+        button_clicked = false;
     }
 }
 
@@ -332,5 +351,5 @@ void InitializeDelayTimers() {
     displayDateDelay = new NonBlockingDelay(5000);
     buttonDebounceTimer = new NonBlockingDelay(250);
     backlightFadeTimer = new NonBlockingDelay(65);
-    antiPoisoningTimer = new NonBlockingDelay(250);
+    antiPoisoningTimer = new NonBlockingDelay(ANTI_POISONING_FRAME_DELAY);
 }
