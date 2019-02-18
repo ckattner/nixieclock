@@ -186,7 +186,6 @@ void UpdateDate() {
             uint32_t newTime = dt.unixtime + offset;
             rtc.setDateTime(newTime);
             encoderDirections[i] = NONE;
-            displayDateDelay->reset();
         }
     }
 }
@@ -242,13 +241,7 @@ void ReadButtons() {
             if (digitalRead(encoderButtonPins[i]) == LOW) {
 
                 button_clicked = !button_clicked;
-
                 buttonDebounceTimer->reset();
-
-                if (display_state == DATE) {
-                    displayDateDelay->reset();
-                }
-
                 return;
             }
         }
@@ -272,25 +265,37 @@ void UpdateDisplay() {
 
 void UpdateDisplayState() {
 
-    if (dt.second >= 0 && dt.second <= 5 || button_clicked) {
+    bool elapsed = displayDateDelay->hasElapsed();
+
+    if (display_state == DATE && !elapsed) {
         display_state = DATE;
-        displayDateDelay->reset();
     } else {
-        display_state = TIME;
+        if (dt.second == 0 || button_clicked) {
+            display_state = DATE;
+            displayDateDelay->reset();
+            button_clicked = false;
+        } else {
+            if ((dt.minute % 15 == 0 && dt.second == 30) ||
+                (display_state == ANTIPOISONING && loop_count < 15)) {
+                display_state = ANTIPOISONING;
+            } else {
+                display_state = TIME;
+            }
+        }
     }
 
-    if (dt.minute % 15 == 0 && dt.second >= 30 && dt.second <= 30 + ANTI_POISONING_FRAME_DELAY / 1000.0 * 14) {
-        display_state = ANTIPOISONING;
-    }
-
-    if (displayDateDelay->hasElapsed()) {
-        button_clicked = false;
+    if (display_state == DATE) {
+        for (uint8_t i = 0; i < ENCODER_COUNT; i++) {
+            if (encoderDirections[i] != NONE) {
+                displayDateDelay->reset();
+                return;
+            }
+        }
     }
 }
 
 void DisplayTime() {
 
-    RTCDateTime dt = rtc.getDateTime();
     uint8_t h = dt.hour;
     uint8_t m = dt.minute;
     uint8_t s = dt.second;
@@ -300,7 +305,6 @@ void DisplayTime() {
 
 void DisplayDate() {
 
-    RTCDateTime dt = rtc.getDateTime();
     uint8_t m = dt.month;
     uint8_t d = dt.day;
     uint16_t y = dt.year;
